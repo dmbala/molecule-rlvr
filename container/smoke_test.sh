@@ -25,9 +25,14 @@ PY
 echo "== Vina CLI =="
 vina --version
 
-echo "== Receptor-prep tooling (ADFRsuite) =="
-prepare_receptor4.py -h 2>&1 | head -n 5
-reduce -h 2>&1 | head -n 3 || true
+echo "== Receptor-prep path (OpenBabel Python + RDKit) =="
+python - <<'PY'
+from openbabel import pybel
+print(f"  openbabel formats available: {len(pybel.informats)} in / {len(pybel.outformats)} out")
+assert "pdb" in pybel.informats and "pdbqt" in pybel.outformats, \
+    "OpenBabel build is missing PDB/PDBQT support"
+print("  pdb/pdbqt formats: OK")
+PY
 
 echo "== CUDA visibility =="
 python - <<'PY'

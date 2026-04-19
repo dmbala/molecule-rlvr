@@ -8,21 +8,37 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
 %post
     set -eux
     export DEBIAN_FRONTEND=noninteractive
+
+    # Pre-create dirs that some postinst scripts try to chown — under fakeroot
+    # those chowns fail and cascade a lot of packages to unconfigured state.
+    mkdir -p /usr/local/share/fonts
+
     apt-get update
+    # Minimal set: no openbabel from apt (it pulls libcairo2 → libfontconfig1 →
+    # fontconfig-config, which chowns /usr/local/share/fonts and fails under
+    # fakeroot). We get Python openbabel bindings from the pip openbabel-wheel.
     apt-get install -y --no-install-recommends \
         ca-certificates wget curl git \
         build-essential swig \
         python3.11 python3.11-dev python3-pip \
-        openbabel libopenbabel-dev \
-        libxrender1 libsm6
+        libboost-python-dev libboost-thread-dev libboost-system-dev \
+        libboost-filesystem-dev libboost-program-options-dev \
+        libboost-serialization-dev libboost-iostreams-dev \
+        libboost-regex-dev libboost-timer-dev libboost-chrono-dev \
+        libxrender1 libxext6 libsm6 libxt6 libice6
     update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
     update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
 
     pip install --no-cache-dir --upgrade pip setuptools wheel
 
     # --- Deterministic DL stack (torch/cuda pin drives flash-attn) -----------
+    # Pinned to torch 2.3.0+cu121 — that's what openrlhf 0.4.4's transitive
+    # deps (vllm 0.5.3, deepspeed) actually support. Tried 2.4.0+cu124 and
+    # pip silently downgraded us to 2.3.0 anyway, producing a flash-attn
+    # ABI mismatch. The base image has CUDA 12.4 runtime which is
+    # backward-compatible with cu121 wheels.
     pip install --no-cache-dir \
-        torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124
+        torch==2.3.0 --index-url https://download.pytorch.org/whl/cu121
 
     # --- Chemistry stack ------------------------------------------------------
     pip install --no-cache-dir \
@@ -33,10 +49,13 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
         numpy==1.26.4 scipy==1.13.1 pandas==2.2.2 \
         selfies==2.1.2
 
-    # SA_Score ships as a contrib file in RDKit (not on the import path by default)
+    # SA_Score ships as a contrib file in RDKit (not on the import path by default).
+    # We drop a .pth file into site-packages so sascorer is importable regardless
+    # of how callers set PYTHONPATH (training scripts override it explicitly).
     SARG_SRC=$(python -c "import rdkit, os; print(os.path.join(os.path.dirname(rdkit.__file__), 'Contrib', 'SA_Score'))")
     cp -r "$SARG_SRC" /opt/sascorer
-    echo 'export PYTHONPATH=/opt/sascorer:${PYTHONPATH:-}' >> $SINGULARITY_ENVIRONMENT
+    SITE_PKGS=$(python -c "import site; print(site.getsitepackages()[0])")
+    echo "/opt/sascorer" > "$SITE_PKGS/sascorer.pth"
 
     # --- AutoDock Vina binary (backup to the Python API) ----------------------
     wget -q \
@@ -44,18 +63,34 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
         -O /usr/local/bin/vina
     chmod +x /usr/local/bin/vina
 
-    # --- ADFRsuite for receptor prep (prepare_receptor4.py, reduce, etc.) -----
-    mkdir -p /opt/adfr-install && cd /opt/adfr-install
-    wget -q https://ccsb.scripps.edu/adfr/download/1038/ADFRsuite_x86_64Linux_1.0.tar.gz
-    tar xf ADFRsuite_x86_64Linux_1.0.tar.gz
-    cd ADFRsuite_x86_64Linux_1.0
-    echo Y | ./install.sh -d /opt/adfr -c 0
-    cd / && rm -rf /opt/adfr-install
-    echo 'export PATH=/opt/adfr/bin:${PATH}' >> $SINGULARITY_ENVIRONMENT
+    # NOTE: receptor prep uses the OpenBabel Python API (openbabel-wheel) +
+    # RDKit directly; we do NOT install ADFRsuite because its download page
+    # at ccsb.scripps.edu (a) has an SSL cert mismatch, (b) returns HTML
+    # rather than a tarball under --no-check-certificate. The prep script at
+    # data/receptors/*/prep_receptor.sh has been rewritten to use pure
+    # Python for hydrogen placement + PDBQT conversion.
 
-    # --- RL stack (order matters: flash-attn compiles against installed torch) -
-    pip install --no-cache-dir "openrlhf[vllm,ray]==0.4.4"
-    pip install --no-cache-dir flash-attn==2.6.3 --no-build-isolation
+    # --- RL stack ------------------------------------------------------------
+    # flash-attn 2.6.1 has an ABI mismatch with torch 2.4.x (undefined symbol:
+    # _ZNK3c105Error4whatEv); 2.6.3 fixed it. openrlhf==0.4.4 pins
+    # flash-attn==2.6.1 rigidly, so we clone the source, relax the pin, then
+    # install. This avoids both the broken 2.6.1 wheel AND the 30-min source
+    # compile — 2.6.3 has a prebuilt wheel for torch 2.4 / cu12 / py3.11.
+    pip install --no-cache-dir ninja packaging
+
+    # Install flash-attn 2.6.3 wheel for torch 2.3 so openrlhf's transitive
+    # resolver sees it already satisfied. Matches our pinned torch ABI.
+    pip install --no-cache-dir \
+        https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
+
+    # Clone openrlhf at the 0.4.4 tag, relax the flash-attn pin, install.
+    git clone --depth 1 --branch v0.4.4 https://github.com/OpenRLHF/OpenRLHF /opt/openrlhf
+    cd /opt/openrlhf
+    # Match both setup.py-style and pyproject-style pins.
+    grep -rl 'flash-attn==2.6.1' . | xargs -r sed -i 's/flash-attn==2.6.1/flash-attn/g'
+    grep -rl 'flash_attn==2.6.1' . | xargs -r sed -i 's/flash_attn==2.6.1/flash_attn/g' || true
+    pip install --no-cache-dir ".[vllm,ray]"
+    cd /
 
     # --- Utility deps ---------------------------------------------------------
     pip install --no-cache-dir \

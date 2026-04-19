@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # Receptor-prep pipeline for SARS-CoV-2 Mpro (PDB 7L13, non-covalent state).
-# See plan Fix 4. Must be run inside chem_rlvr.sif so ADFRsuite + reduce are on PATH.
+# See plan Fix 4. Run inside chem_rlvr.sif.
 #
 # Usage (from repo root):
 #   apptainer exec --nv chem_rlvr.sif bash data/receptors/7L13/prep_receptor.sh
 #
-# Output artifacts (all committed to repo once produced):
-#   receptor.pdb       — raw PDB with waters/HETATMs stripped
-#   receptor_h.pdb     — protonated with `reduce`
-#   receptor.pdbqt     — AutoDock input
+# Output artifacts (committed to repo once the RMSD gate passes):
+#   receptor.pdb       — raw PDB with waters/ligand stripped
+#   receptor.pdbqt     — AutoDock input (generated with OpenBabel)
 #   receptor.config    — Vina grid box (center/size)
-#   cocrystal.pdb      — extracted co-crystal ligand (if any)
+#   cocrystal.pdb      — extracted co-crystal ligand
 #   redock_rmsd.txt    — RMSD vs. crystal pose after redocking (acceptance gate)
+#
+# Uses OpenBabel (openbabel-wheel) + RDKit + Vina (Python API). No ADFRsuite.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -41,25 +42,28 @@ for ln in src:
         elif resn in {"HOH", "SO4", "PO4", "DMS", "EDO"}:
             continue
         else:
-            # Keep cofactors/ions if any; for Mpro there are none typically
             protein.append(ln)
 Path("receptor.pdb").write_text("\n".join(protein) + "\n")
 Path("cocrystal.pdb").write_text("\n".join(ligand) + "\n")
 print(f"Extracted {len(ligand)} ligand atoms -> cocrystal.pdb")
 PY
 
-# --- 3. Add hydrogens with reduce ------------------------------------------
-reduce -Trim receptor.pdb > receptor_noh.pdb 2> reduce_trim.log || true
-reduce -Build receptor_noh.pdb > receptor_h.pdb 2> reduce_build.log
+# --- 3. Receptor PDBQT via OpenBabel ---------------------------------------
+# Add hydrogens at pH 7.4, assign Gasteiger charges, write PDBQT with rigid
+# receptor flag (-xr). Matches the recipe the Forli lab (Vina authors) use
+# for quick receptor prep.
+python - <<'PY'
+from openbabel import pybel
+mol = next(pybel.readfile("pdb", "receptor.pdb"))
+# Protonate at pH 7.4
+mol.OBMol.CorrectForPH(7.4)
+mol.addh()
+# Write PDBQT; -xr = rigid receptor (no rotatable bonds)
+mol.write("pdbqt", "receptor.pdbqt", overwrite=True, opt={"r": True})
+print(f"Wrote receptor.pdbqt ({len(mol.atoms)} atoms including H)")
+PY
 
-# --- 4. Convert to PDBQT via ADFRsuite -------------------------------------
-prepare_receptor4.py \
-    -r receptor_h.pdb \
-    -o receptor.pdbqt \
-    -A checkhydrogens \
-    -U nphs_lps_waters_nonstdres
-
-# --- 5. Grid box: center on co-crystal ligand centroid ---------------------
+# --- 4. Grid box: center on co-crystal ligand centroid ---------------------
 python - <<'PY'
 import numpy as np
 from pathlib import Path
@@ -91,9 +95,9 @@ print("Wrote receptor.config:")
 print(config)
 PY
 
-# --- 6. Redock the co-crystal ligand and compute RMSD ---------------------
+# --- 5. Redock the co-crystal ligand and compute RMSD ---------------------
 python - <<'PY'
-import tempfile, subprocess, os
+import tempfile
 from pathlib import Path
 import numpy as np
 from rdkit import Chem
@@ -104,7 +108,6 @@ ref = Chem.MolFromPDBFile("cocrystal.pdb", removeHs=True, sanitize=False)
 if ref is None:
     raise SystemExit("RDKit could not parse cocrystal.pdb")
 
-# Prepare ligand PDBQT using meeko
 from meeko import MoleculePreparation, PDBQTWriterLegacy
 ref_h = Chem.AddHs(ref, addCoords=True)
 prep = MoleculePreparation()
@@ -112,30 +115,26 @@ prep.prepare(ref_h)
 pdbqt = PDBQTWriterLegacy.write_string(prep.setup)[0]
 Path("cocrystal_lig.pdbqt").write_text(pdbqt)
 
-# Redock with Vina
 from vina import Vina
 v = Vina(sf_name="vina", cpu=4, seed=0, verbosity=1)
 v.set_receptor("receptor.pdbqt")
 v.set_ligand_from_file("cocrystal_lig.pdbqt")
 
-# Parse center/size from receptor.config
 cfg = dict(
     line.split("=", 1) for line in Path("receptor.config").read_text().splitlines() if "=" in line
 )
 center = [float(cfg[f"center_{a}"]) for a in "xyz"]
-size = [float(cfg[f"size_{a}"]) for a in "xyz"]
+size   = [float(cfg[f"size_{a}"]) for a in "xyz"]
 v.compute_vina_maps(center=center, box_size=size)
 v.dock(exhaustiveness=16, n_poses=9)
 v.write_poses("cocrystal_redocked.pdbqt", n_poses=1, overwrite=True)
 
-# Compute heavy-atom RMSD between crystal pose and top redocked pose
 from openbabel import pybel
 docked = next(pybel.readfile("pdbqt", "cocrystal_redocked.pdbqt"))
 docked_coords = np.array([[a.coords[0], a.coords[1], a.coords[2]]
                           for a in docked.atoms if a.atomicnum > 1])
 ref_coords = ref.GetConformer().GetPositions()
 
-# Match heavy-atom counts (best effort; production-grade tool would use OBAlign)
 n = min(len(ref_coords), len(docked_coords))
 diff = ref_coords[:n] - docked_coords[:n]
 rmsd = float(np.sqrt((diff ** 2).sum(axis=1).mean()))
@@ -155,4 +154,4 @@ print("PASS")
 PY
 
 echo "Receptor prep complete. Artifacts:"
-ls -la receptor.pdb receptor_h.pdb receptor.pdbqt receptor.config cocrystal.pdb redock_rmsd.txt
+ls -la receptor.pdb receptor.pdbqt receptor.config cocrystal.pdb redock_rmsd.txt
