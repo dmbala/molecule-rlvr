@@ -96,11 +96,10 @@ class LocalChatModel:
                        gpu_memory_utilization=0.85, dtype="bfloat16")
         self.thinking = thinking
         self.sampling = SamplingParams(temperature=0.8, top_p=0.95, max_tokens=1024)
-        # Qwen3 chat template accepts `enable_thinking`; on non-Qwen3 templates
-        # the kwarg is silently ignored.
-        self._supports_thinking_kw = "enable_thinking" in self.tok.apply_chat_template.__doc__ or "enable_thinking" in self.tok.init_kwargs
 
     def render(self, messages: list[dict]) -> str:
+        # Qwen3 chat template accepts `enable_thinking`; other templates raise
+        # TypeError on the unknown kwarg, so we retry without it.
         kwargs = dict(tokenize=False, add_generation_prompt=True)
         try:
             return self.tok.apply_chat_template(messages, enable_thinking=self.thinking, **kwargs)
@@ -196,10 +195,17 @@ def main() -> None:
     arms: list[ArmSpec] = [ArmSpec(**a) for a in json.loads(args.arms.read_text())]
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
+    by_arm: dict[str, dict[str, Any]] = {}
+
+    def _new_arm_stats() -> dict[str, Any]:
+        return {"n_prompts": 0, "n_solved": 0,
+                "turns_to_threshold": [], "best_reward": [], "best_dock": []}
+
     with args.out.open("w") as fout:
         for arm in arms:
             log.info("=== Arm %s (%s, thinking=%s) ===", arm.name, arm.model, arm.thinking)
             model = LocalChatModel(arm.model, thinking=arm.thinking)
+            stats = by_arm.setdefault(arm.name, _new_arm_stats())
             for it in items:
                 t0 = time.time()
                 traj = run_trajectory(arm, it, model, cfg,
@@ -208,33 +214,24 @@ def main() -> None:
                 out = asdict(traj)
                 out["wall_sec"] = time.time() - t0
                 fout.write(json.dumps(out) + "\n")
+                stats["n_prompts"] += 1
+                if traj.reached_threshold_at_turn is not None:
+                    stats["n_solved"] += 1
+                    stats["turns_to_threshold"].append(traj.reached_threshold_at_turn)
+                stats["best_reward"].append(traj.best_reward)
+                if traj.best_dock is not None:
+                    stats["best_dock"].append(traj.best_dock)
             # Free GPU memory before loading the next arm. vLLM has no clean
             # shutdown in 0.4.x; process recycling at the shell level is
             # the robust choice if memory becomes an issue.
             del model
 
-    # --- Summary ------------------------------------------------------------
     log.info("Summary by arm:")
-    by_arm: dict[str, dict[str, Any]] = {}
-    for ln in args.out.read_text().splitlines():
-        d = json.loads(ln)
-        a = by_arm.setdefault(d["arm"], {"n_prompts": 0, "n_solved": 0,
-                                         "turns_to_threshold": [],
-                                         "best_reward": [],
-                                         "best_dock": []})
-        a["n_prompts"] += 1
-        if d["reached_threshold_at_turn"] is not None:
-            a["n_solved"] += 1
-            a["turns_to_threshold"].append(d["reached_threshold_at_turn"])
-        a["best_reward"].append(d["best_reward"])
-        if d["best_dock"] is not None:
-            a["best_dock"].append(d["best_dock"])
-
-    for arm, s in by_arm.items():
+    for arm_name, s in by_arm.items():
         tts = s["turns_to_threshold"]
         log.info(
             "  %-18s solved=%d/%d  median_turns=%s  mean_best_reward=%.3f  mean_best_dock=%.2f",
-            arm, s["n_solved"], s["n_prompts"],
+            arm_name, s["n_solved"], s["n_prompts"],
             f"{sorted(tts)[len(tts)//2]}" if tts else "NA",
             sum(s["best_reward"]) / len(s["best_reward"]),
             (sum(s["best_dock"]) / len(s["best_dock"])) if s["best_dock"] else float("nan"),

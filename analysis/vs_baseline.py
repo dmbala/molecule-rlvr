@@ -48,6 +48,21 @@ log = logging.getLogger("vs_baseline")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
 
 
+# Hit criteria — keep aligned with analysis/preregistration.md §4 (primary metric).
+HIT_DOCK_THRESHOLD = -7.0
+HIT_QED_MIN = 0.5
+HIT_SA_MAX = 5.0
+
+
+def is_hit(record: dict) -> bool:
+    dock = record.get("dock_kcal")
+    if dock is None:
+        return False
+    return (dock < HIT_DOCK_THRESHOLD
+            and (record.get("qed") or 0.0) > HIT_QED_MIN
+            and (record.get("sa_raw") or 10.0) < HIT_SA_MAX)
+
+
 def load_prompts(path: Path, split: str = "eval") -> list[dict]:
     items = []
     for ln in path.read_text().splitlines():
@@ -76,10 +91,6 @@ def sample_vllm(model_path: str, prompts: list[str], n: int, temperature: float,
                             max_tokens=max_tokens)
     outputs = llm.generate(prompts, params)
     return [[o.text for o in out.outputs] for out in outputs]
-
-
-def evaluate_group(responses: list[str], cfg, step: int) -> list[RewardRecord]:
-    return verify_group(responses, cfg, step=step)
 
 
 def main() -> None:
@@ -127,29 +138,18 @@ def main() -> None:
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
 
-    # Aggregate metrics ----------------------------------------------------
-    rewards = [r["reward"] for r in all_records]
-    hits_dock7 = sum(1 for r in all_records
-                     if r.get("dock_kcal") is not None
-                     and r["dock_kcal"] < -7.0
-                     and (r.get("qed") or 0.0) > 0.5
-                     and (r.get("sa_raw") or 10.0) < 5.0)
-    n_parsed = sum(1 for r in all_records if r.get("parsed"))
     n_total = len(all_records)
+    n_parsed = sum(1 for r in all_records if r.get("parsed"))
+    total_hits = sum(1 for r in all_records if is_hit(r))
 
-    # Hit-rate curve by oracle-call rank: sort records by reward desc, step
-    # through in chunks of 100 evaluated molecules and report cumulative hits.
     sorted_by_rew = sorted(
         [r for r in all_records if r.get("dock_kcal") is not None],
         key=lambda r: -r["reward"],
     )
-    curve = []
+    curve: list[dict] = []
     cum_hits = 0
     for i, r in enumerate(sorted_by_rew, 1):
-        is_hit = (r["dock_kcal"] < -7.0
-                  and (r.get("qed") or 0.0) > 0.5
-                  and (r.get("sa_raw") or 10.0) < 5.0)
-        if is_hit:
+        if is_hit(r):
             cum_hits += 1
         if i % 100 == 0 or i == len(sorted_by_rew):
             curve.append({"n_evaluated": i, "cum_hits": cum_hits,
@@ -162,7 +162,7 @@ def main() -> None:
         "n_parsed": n_parsed,
         "parse_rate": n_parsed / max(1, n_total),
         "n_oracle_calls": budget_oracle_calls,
-        "hit_rate_overall": hits_dock7 / max(1, n_total),
+        "hit_rate_overall": total_hits / max(1, n_total),
         "hit_rate_curve": curve,
         "wall_clock_sec": time.time() - t0,
     }

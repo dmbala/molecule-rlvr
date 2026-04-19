@@ -37,6 +37,13 @@ MPRO_CONTEXT = (
     "S4 sub-pocket: Gln192, Thr190, Ala191, Leu167."
 )
 
+LABEL_STRONG = "strong"
+LABEL_MEDIUM = "medium"
+LABEL_WEAK = "weak"
+LABELS = (LABEL_STRONG, LABEL_MEDIUM, LABEL_WEAK)
+STRONG_THRESHOLD = -8.0
+MEDIUM_THRESHOLD = -6.0
+
 
 def iter_jsonl(path: Path):
     for ln in path.read_text().splitlines():
@@ -45,11 +52,11 @@ def iter_jsonl(path: Path):
 
 
 def label_for(score: float) -> str:
-    if score <= -8.0:
-        return "strong"
-    if score <= -6.0:
-        return "medium"
-    return "weak"
+    if score <= STRONG_THRESHOLD:
+        return LABEL_STRONG
+    if score <= MEDIUM_THRESHOLD:
+        return LABEL_MEDIUM
+    return LABEL_WEAK
 
 
 def main() -> None:
@@ -76,13 +83,17 @@ def main() -> None:
     chembl = ([d["text"] for d in iter_jsonl(args.chembl)] if args.chembl else [])
 
     candidates = {
-        "strong": known,                                      # expected strong
-        "medium": rng.sample(chembl, min(len(chembl), 20000)) if chembl else [],
-        "weak":   rng.sample(zinc, min(len(zinc), 20000)) if zinc else [],
+        LABEL_STRONG: known,                                      # expected strong
+        LABEL_MEDIUM: rng.sample(chembl, min(len(chembl), 20000)) if chembl else [],
+        LABEL_WEAK:   rng.sample(zinc, min(len(zinc), 20000)) if zinc else [],
     }
 
-    targets = {"strong": args.n_strong, "medium": args.n_medium, "weak": args.n_weak}
-    kept = {k: [] for k in targets}
+    targets = {
+        LABEL_STRONG: args.n_strong,
+        LABEL_MEDIUM: args.n_medium,
+        LABEL_WEAK: args.n_weak,
+    }
+    kept: dict[str, list[dict]] = {k: [] for k in targets}
 
     # 2. Dock each candidate until we have enough in each bucket -------------
     with args.out.open("w") as fout:
@@ -118,7 +129,7 @@ def main() -> None:
                     kept[obs_bucket].append(item)
                     idx += 1
                     if idx % 100 == 0:
-                        print(f"kept: strong={len(kept['strong'])} medium={len(kept['medium'])} weak={len(kept['weak'])}")
+                        print("kept: " + " ".join(f"{k}={len(v)}" for k, v in kept.items()))
 
     print("Final:", {k: len(v) for k, v in kept.items()}, "->", args.out)
 

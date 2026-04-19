@@ -39,6 +39,8 @@ from reward_components import (
 RDLogger.DisableLog("rdApp.*")
 log = logging.getLogger("chem_verifier")
 
+_LABEL_PREFIXES = ("Final:", "Answer:", "SMILES:", "Result:")
+
 
 # --- Configuration ----------------------------------------------------------
 
@@ -148,7 +150,6 @@ def extract_smiles(response: str) -> str | None:
             if cand:
                 return cand.splitlines()[-1].strip()
 
-    _LABEL_PREFIXES = ("Final:", "Answer:", "SMILES:", "Result:")
     for line in reversed(response.splitlines()):
         s = line.strip().strip("`'\"")
         if not s or s.startswith("Turn "):

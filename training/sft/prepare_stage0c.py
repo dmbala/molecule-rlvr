@@ -21,7 +21,9 @@ import random
 from pathlib import Path
 
 from rdkit import Chem, RDLogger
-from rdkit.Chem import AllChem, BRICS
+from rdkit.Chem import BRICS
+
+from smiles_utils import canonicalize_and_dedup
 
 RDLogger.DisableLog("rdApp.*")
 
@@ -87,23 +89,6 @@ def brics_enumerate(seeds: list[str], n_per_seed: int, rng: random.Random) -> li
             continue
 
     return list(out)
-
-
-def canonicalize_and_dedup(smiles: list[str]) -> list[str]:
-    seen: set[str] = set()
-    out: list[str] = []
-    for s in smiles:
-        m = Chem.MolFromSmiles(s)
-        if m is None:
-            continue
-        frags = Chem.GetMolFrags(m, asMols=True)
-        if len(frags) > 1:
-            m = max(frags, key=lambda x: x.GetNumHeavyAtoms())
-        canon = Chem.MolToSmiles(m, canonical=True)
-        if canon not in seen:
-            seen.add(canon)
-            out.append(canon)
-    return out
 
 
 def main() -> None:
