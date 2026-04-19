@@ -1,0 +1,16 @@
+SARS-CoV-2 Mpro receptor artifacts — PDB 7L13 (non-covalent inhibitor-bound).
+
+Rebuild with:
+    apptainer exec --nv ../../../container/chem_rlvr.sif bash prep_receptor.sh
+
+Artifacts (committed once prep_receptor.sh passes the RMSD < 2.0 A gate):
+  receptor.pdb          stripped protein
+  receptor_h.pdb        + hydrogens via `reduce`
+  receptor.pdbqt        AutoDock input
+  receptor.config       grid box center + size
+  cocrystal.pdb         reference ligand coordinates
+  redock_rmsd.txt       crystal-pose vs. redocked-pose RMSD (acceptance test)
+
+Do not regenerate these during training. If you change the grid box, start a new
+receptor directory (e.g., data/receptors/7L13_v2/) so every training run has a
+reproducible frozen receptor.

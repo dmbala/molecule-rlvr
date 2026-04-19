@@ -1,0 +1,86 @@
+Bootstrap: docker
+From: nvidia/cuda:12.4.1-devel-ubuntu22.04
+
+%labels
+    Project molecule-rlvr
+    Purpose Chemistry-RLVR GRPO training + Vina docking verifier
+
+%post
+    set -eux
+    export DEBIAN_FRONTEND=noninteractive
+    apt-get update
+    apt-get install -y --no-install-recommends \
+        ca-certificates wget curl git \
+        build-essential swig \
+        python3.11 python3.11-dev python3-pip \
+        openbabel libopenbabel-dev \
+        libxrender1 libsm6
+    update-alternatives --install /usr/bin/python python /usr/bin/python3.11 1
+    update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.11 1
+
+    pip install --no-cache-dir --upgrade pip setuptools wheel
+
+    # --- Deterministic DL stack (torch/cuda pin drives flash-attn) -----------
+    pip install --no-cache-dir \
+        torch==2.4.0 --index-url https://download.pytorch.org/whl/cu124
+
+    # --- Chemistry stack ------------------------------------------------------
+    pip install --no-cache-dir \
+        rdkit==2024.3.5 \
+        meeko==0.6.0 \
+        vina==1.2.5 \
+        openbabel-wheel \
+        numpy==1.26.4 scipy==1.13.1 pandas==2.2.2 \
+        selfies==2.1.2
+
+    # SA_Score ships as a contrib file in RDKit (not on the import path by default)
+    SARG_SRC=$(python -c "import rdkit, os; print(os.path.join(os.path.dirname(rdkit.__file__), 'Contrib', 'SA_Score'))")
+    cp -r "$SARG_SRC" /opt/sascorer
+    echo 'export PYTHONPATH=/opt/sascorer:${PYTHONPATH:-}' >> $SINGULARITY_ENVIRONMENT
+
+    # --- AutoDock Vina binary (backup to the Python API) ----------------------
+    wget -q \
+        https://github.com/ccsb-scripps/AutoDock-Vina/releases/download/v1.2.5/vina_1.2.5_linux_x86_64 \
+        -O /usr/local/bin/vina
+    chmod +x /usr/local/bin/vina
+
+    # --- ADFRsuite for receptor prep (prepare_receptor4.py, reduce, etc.) -----
+    mkdir -p /opt/adfr-install && cd /opt/adfr-install
+    wget -q https://ccsb.scripps.edu/adfr/download/1038/ADFRsuite_x86_64Linux_1.0.tar.gz
+    tar xf ADFRsuite_x86_64Linux_1.0.tar.gz
+    cd ADFRsuite_x86_64Linux_1.0
+    echo Y | ./install.sh -d /opt/adfr -c 0
+    cd / && rm -rf /opt/adfr-install
+    echo 'export PATH=/opt/adfr/bin:${PATH}' >> $SINGULARITY_ENVIRONMENT
+
+    # --- RL stack (order matters: flash-attn compiles against installed torch) -
+    pip install --no-cache-dir "openrlhf[vllm,ray]==0.4.4"
+    pip install --no-cache-dir flash-attn==2.6.3 --no-build-isolation
+
+    # --- Utility deps ---------------------------------------------------------
+    pip install --no-cache-dir \
+        wandb==0.17.0 \
+        pyyaml==6.0.1 \
+        tqdm==4.66.4 \
+        datasets==2.19.0
+
+    # Clean up
+    apt-get clean
+    rm -rf /var/lib/apt/lists/*
+    pip cache purge || true
+
+%environment
+    export PYTHONUNBUFFERED=1
+    export OMP_NUM_THREADS=1
+    # NCCL tuning for multi-node Ray + DeepSpeed. Override per-cluster as needed.
+    export NCCL_ASYNC_ERROR_HANDLING=1
+    export TOKENIZERS_PARALLELISM=false
+
+%runscript
+    exec "$@"
+
+%help
+    chem_rlvr: chemistry-RLVR training image.
+    Contains: torch 2.4 / cu124, rdkit 2024.3.5, meeko, vina (Python + CLI),
+    ADFRsuite, SA_Score, openrlhf[vllm,ray] 0.4.4, flash-attn 2.6.3.
+    Validate with: apptainer exec chem_rlvr.sif bash container/smoke_test.sh

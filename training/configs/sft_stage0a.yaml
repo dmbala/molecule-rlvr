@@ -1,0 +1,30 @@
+# SFT Stage 0a — warm-start the chemistry "language model" on 5M drug-like SMILES.
+# Plan Fix 8.1. Runs before 0b (R1-CoT traces) and 0c (Mpro inhibitor analogs).
+
+strategy: deepspeed_stage_2
+pretrain: Qwen/Qwen3-8B
+save_path: /workspace/checkpoints/sft_stage0a
+
+dataset: /workspace/data/sft/chembl_zinc_drug_like_5M.jsonl
+input_key: text            # raw SMILES text (+ atom-in-SMILES tokenizer)
+max_len: 512
+train_batch_size: 256
+micro_train_batch_size: 8
+
+learning_rate: 2e-5
+max_epochs: 1
+num_warmup_steps: 200
+weight_decay: 0.01
+grad_accum_dtype: bf16
+
+# Vocabulary extension (plan Fix 9.3, Option A): add ~500 atom-in-SMILES tokens
+# to the tokenizer, then train. See training/tokenizer/extend_vocab.py.
+tokenizer_extended: /workspace/training/tokenizer/qwen3_atomInSmiles
+resize_token_embeddings: true
+embed_init: mean           # init new embeddings as the mean of existing ones
+
+use_wandb: true
+wandb_project: molecule-rlvr
+wandb_run_name: sft_stage0a
+logging_steps: 10
+save_steps: 1000

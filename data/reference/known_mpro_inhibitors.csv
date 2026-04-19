@@ -1,0 +1,13 @@
+name,smiles,source,binding_mode,notes
+nirmatrelvir,CC1(C)C2CC1C(C(=O)NC(CC1CCNC1=O)C#N)N2C(=O)C(NC(=O)C(F)(F)F)C(C)(C)C,Paxlovid (Pfizer),covalent_reversible,peptidomimetic nitrile; clinically approved
+GC-376,O=C(NCC(=O)C(CC1CCNC1=O)NC(=O)OCc1ccccc1)OS(=O)(=O)[O-],preclinical,covalent_reversible,aldehyde bisulfite adduct; research tool
+boceprevir,CC(C)(C)NC(=O)C1CC2(CCC2)CN1C(=O)C(NC(=O)NC(C)(C)C)C1CCCC1,Hepatitis C drug (repurposed),covalent_reversible,HCV NS3 protease inhibitor with Mpro activity
+ensitrelvir,O=C(Nc1ccc(F)c(F)c1)N1CCN(c2nc(C(F)(F)F)c(C)nn2)CC1,Xocova (Shionogi),non_covalent,clinically approved (Japan 2022)
+MI-09,O=C(NC1CCNC1=O)C(Cc1ccc(Cl)cc1)NC(=O)C(NC(=O)OCc1ccccc1)C(C)C,preclinical,covalent_reversible,aldehyde warhead
+MI-30,O=C(NC1CCNC1=O)C(CCc1ccccc1)NC(=O)C1CCCCN1C(=O)OC(C)(C)C,preclinical,covalent_reversible,aldehyde warhead
+11a,O=C(NC1CCNC1=O)C(CC1CCCCC1)NC(=O)C(CC(C)C)NC(=O)OCc1ccccc1,preclinical Nature 2020,covalent_reversible,Yang et al. 11a peptidomimetic
+11b,O=C(NC1CCNC1=O)C(Cc1ccc(F)cc1)NC(=O)C(CC(C)C)NC(=O)OCc1ccccc1,preclinical Nature 2020,covalent_reversible,Yang et al. 11b peptidomimetic
+N3,CC(C)CC(NC(=O)C(CC(C)C)NC(=O)OCc1ccccc1)C(=O)NC(CC1CCNC1=O)C=CC(=O)OCC,preclinical,covalent_irreversible,Michael acceptor; crystal ligand in 6LU7
+PF-07321332,CC1(C)C2CC1C(C(=O)NC(CC1CCNC1=O)C#N)N2C(=O)C(NC(=O)C(F)(F)F)C(C)(C)C,preclinical code for nirmatrelvir,covalent_reversible,same as nirmatrelvir
+jun9-57-3,COc1ccc(CNC(=O)C(NC(=O)OCc2ccccc2)C(C)C)cc1,preclinical,non_covalent,dipeptidyl inhibitor
+jun8-76-3A,O=C(NC(Cc1ccc(F)cc1)C(=O)NC1CCNC1=O)OCc1ccccc1,preclinical,covalent_reversible,aldehyde warhead

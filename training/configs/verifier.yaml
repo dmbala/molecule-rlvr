@@ -1,0 +1,33 @@
+# VerifierConfig consumed by chemistry_verifier.reward_fn_openrlhf.
+# Path is referenced via env var CHEM_VERIFIER_CONFIG.
+
+docking:
+  receptor_pdbqt: /workspace/data/receptors/7L13/receptor.pdbqt
+  center: [10.4, -5.8, 23.1]     # placeholder — overwritten by receptor-prep output
+  size: [22.0, 22.0, 22.0]
+  exhaustiveness: 16
+  num_modes: 9
+  n_seeds: 3
+  vina_binary: vina
+
+weights:
+  dock: 0.50
+  qed: 0.15
+  sa: 0.15
+  diversity: 0.20
+
+curriculum:
+  # (step, dock_sigmoid_center_kcal_per_mol)
+  milestones:
+    - [0, -5.0]
+    - [100, -7.0]
+    - [300, -8.0]
+
+invalid_penalty: -1.0
+pains_penalty: -0.5
+reactive_penalty: -0.5
+strain_threshold_kcal: 60.0
+strain_penalty: -0.2
+
+rank_based_dock: false
+multiturn_improvement_coef: 0.2

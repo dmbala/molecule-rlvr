@@ -1,0 +1,21 @@
+Reference molecules and datasets.
+
+known_mpro_inhibitors.csv
+    12 known SARS-CoV-2 Mpro inhibitors with SMILES, source, binding mode, notes.
+    Used for:
+      (a) Reward sanity check (plan Fix 2 validation: top decile gate).
+      (b) Lead-optimization prompt seeds (plan Fix 8.2).
+      (c) "Recovery" metric during analysis.
+    NOTE: SMILES strings were hand-curated from literature. Before publication,
+    cross-check each against ChEMBL / PubChem — a few are known to have
+    isomerism or tautomer variants. Annotate any corrections here.
+
+zinc_random.smi  (not committed; download separately)
+    ~2000 random drug-like molecules from ZINC20's "drug-like" subset.
+    Used as:
+      (a) Background for the reward sanity check.
+      (b) Lead-optimization prompt seeds (zinc_random provenance).
+
+To fetch:
+    curl -o zinc_random.smi 'https://files.docking.org/2D/BB/BBAB/BBAB.smi' | head -n 2000
+    (or equivalent tranche; any "drug-like" subset works)
