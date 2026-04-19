@@ -1,0 +1,26 @@
+[
+  {
+    "name": "A_standard",
+    "model": "Qwen/Qwen3-8B",
+    "thinking": false,
+    "system": null
+  },
+  {
+    "name": "B_elicited_cot",
+    "model": "Qwen/Qwen3-8B",
+    "thinking": false,
+    "system": "You are an expert medicinal chemist. Think step-by-step about the target pocket and the ligand's interactions before proposing each SMILES. Always finish with a single line containing only the final SMILES."
+  },
+  {
+    "name": "C_reasoning",
+    "model": "Qwen/Qwen3-8B",
+    "thinking": true,
+    "system": null
+  },
+  {
+    "name": "R1_distill_reference",
+    "model": "deepseek-ai/DeepSeek-R1-Distill-Qwen-7B",
+    "thinking": false,
+    "system": null
+  }
+]

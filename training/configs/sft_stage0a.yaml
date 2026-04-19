@@ -5,7 +5,7 @@ strategy: deepspeed_stage_2
 pretrain: Qwen/Qwen3-8B
 save_path: /workspace/checkpoints/sft_stage0a
 
-dataset: /workspace/data/sft/chembl_zinc_drug_like_5M.jsonl
+dataset: /workspace/data/sft/stage0a/train.jsonl
 input_key: text            # raw SMILES text (+ atom-in-SMILES tokenizer)
 max_len: 512
 train_batch_size: 256

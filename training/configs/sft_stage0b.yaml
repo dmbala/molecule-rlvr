@@ -1,0 +1,35 @@
+# SFT Stage 0b — R1-generated docking-rationale CoT traces.
+# Builds on the Stage 0a checkpoint; uses the chat-template format of
+# Qwen3 so the trained model learns to emit <think>...</think> traces
+# that reference Mpro residues.
+
+strategy: deepspeed_stage_2
+pretrain: /workspace/checkpoints/sft_stage0a
+save_path: /workspace/checkpoints/sft_stage0b
+
+# ChatML-formatted conversations produced by generate_r1_cot.py
+dataset: /workspace/data/sft/stage0b/r1_cot.jsonl
+input_key: messages
+max_len: 4096                # R1 traces are long; don't truncate mid-reasoning
+
+train_batch_size: 64
+micro_train_batch_size: 1    # long sequences dominate memory
+
+learning_rate: 1e-5          # smaller LR over smaller corpus
+max_epochs: 2
+num_warmup_steps: 100
+weight_decay: 0.01
+
+tokenizer_extended: /workspace/checkpoints/sft_stage0a   # carried through from 0a
+resize_token_embeddings: false
+
+use_wandb: true
+wandb_project: molecule-rlvr
+wandb_run_name: sft_stage0b
+logging_steps: 5
+save_steps: 500
+
+# NOTE: train_sft.py assumes {input_key: text}. For Stage 0b we use
+# {input_key: messages} with HF's chat template. If train_sft.py hasn't been
+# extended to handle chat templates yet, route Stage 0b through a small
+# sft_chat.py variant (TODO).

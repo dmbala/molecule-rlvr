@@ -65,7 +65,7 @@ ssh -o StrictHostKeyChecking=no "$HEAD_HOST" "cd $WORKSPACE_DIR && \
     apptainer exec --nv \
         --bind $WORKSPACE_DIR:/workspace \
         --env CHEM_VERIFIER_CONFIG=/workspace/training/configs/verifier.yaml \
-        --env PYTHONPATH=/workspace/verifier \
+        --env PYTHONPATH=/workspace/verifier:/opt/sascorer \
         --env RAY_ADDRESS=$RAY_HEAD_IP:$RAY_PORT \
         $APPTAINER_SIF \
         python -m openrlhf.cli.train_ppo_ray \
