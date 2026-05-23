@@ -41,9 +41,14 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
         torch==2.3.0 --index-url https://download.pytorch.org/whl/cu121
 
     # --- Chemistry stack ------------------------------------------------------
+    # meeko: pinned to 0.7.1. 0.6.0's wheel ships no data/params/, so
+    # `MoleculePreparation()` raises `load_atom_params: ad4_types needs .json`
+    # at construction time and blocks every Vina call. 0.7.1 ships the JSON
+    # files correctly and keeps the deprecated `.setup` attribute that
+    # verifier/reward_components.py uses.
     pip install --no-cache-dir \
         rdkit==2024.3.5 \
-        meeko==0.6.0 \
+        meeko==0.7.1 \
         vina==1.2.5 \
         openbabel-wheel \
         numpy==1.26.4 scipy==1.13.1 pandas==2.2.2 \

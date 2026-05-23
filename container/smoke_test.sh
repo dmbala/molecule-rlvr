@@ -25,6 +25,27 @@ PY
 echo "== Vina CLI =="
 vina --version
 
+echo "== Ligand prep (meeko MoleculePreparation + PDBQTWriterLegacy) =="
+# Catches the meeko-0.6.0 packaging bug where data/params/ad4_types.json is
+# missing. If MoleculePreparation() can construct AND prep.prepare() runs on a
+# real molecule, the docking path is wired correctly.
+python - <<'PY'
+from meeko import MoleculePreparation, PDBQTWriterLegacy
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+prep = MoleculePreparation()
+mol = Chem.MolFromSmiles("O=C(NC1CCOCC1)c1ccc(F)cc1")
+mol = Chem.AddHs(mol)
+AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
+prep.prepare(mol)
+out = PDBQTWriterLegacy.write_string(prep.setup)
+pdbqt = out[0] if isinstance(out, tuple) else out
+assert "ATOM" in pdbqt or "HETATM" in pdbqt, "PDBQT output missing atom records"
+print(f"  meeko prep + PDBQTWriterLegacy: OK ({len(pdbqt)} chars)")
+PY
+
 echo "== Receptor-prep path (OpenBabel Python + RDKit) =="
 python - <<'PY'
 from openbabel import pybel
