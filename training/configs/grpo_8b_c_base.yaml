@@ -1,0 +1,53 @@
+# Arm C-base — 50-step Qwen3-8B GRPO pilot for the Amendment v2 ablation.
+# Single-call trained-thinking; serves as the baseline that C-PC must beat
+# at equal oracle-call budget.
+
+strategy: deepspeed_stage_2
+pretrain: /workspace/checkpoints/sft_stage0c
+reward_pretrain: null
+save_path: /workspace/checkpoints/grpo_8b_c_base_pilot
+ckpt_path: /workspace/checkpoints/grpo_8b_c_base_pilot
+
+# --- GRPO specifics ---------------------------------------------------------
+advantage_estimator: group_norm
+n_samples_per_prompt: 8
+rollout_batch_size: 512
+train_batch_size: 128
+micro_train_batch_size: 2
+micro_rollout_batch_size: 16
+num_episodes: 50
+max_epochs: 1
+prompt_max_len: 2048
+generate_max_len: 1024
+
+# --- Learning ---------------------------------------------------------------
+learning_rate: 5e-7
+kl_coef: 0.02
+lambd: 1.0
+gamma: 1.0
+temperature: 0.9
+top_p: 0.95
+
+# --- Rollout (vLLM) ---------------------------------------------------------
+vllm_num_engines: 2
+vllm_tensor_parallel_size: 2
+vllm_gpu_memory_utilization: 0.85
+
+# --- Reward wiring ----------------------------------------------------------
+# Reads CHEM_VERIFIER_CONFIG (set to verifier.yaml by the launcher).
+reward_functions:
+  - chemistry_verifier
+
+# --- Data -------------------------------------------------------------------
+prompt_data: /workspace/data/prompts/mpro_prompts.jsonl
+prompt_data_probs: "1.0"
+input_key: instruction
+label_key: null
+
+# --- Logging ----------------------------------------------------------------
+use_wandb: true
+wandb_project: molecule-rlvr
+wandb_run_name: grpo_8b_c_base_pilot
+logging_steps: 1
+save_steps: 10
+eval_steps: 10

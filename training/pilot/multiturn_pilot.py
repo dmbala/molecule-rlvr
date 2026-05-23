@@ -43,8 +43,16 @@ from typing import Any
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO / "verifier"))
 
-from chemistry_verifier import verify_group  # noqa: E402
+from chemistry_verifier import verify_group, verify_pair_group  # noqa: E402
 from verifier_config_loader import load_verifier_config  # noqa: E402
+
+sys.path.insert(0, str(_REPO / "training" / "pilot"))
+from role_templates import (  # noqa: E402
+    CRITIC_SYSTEM,
+    PROPOSER_SYSTEM,
+    parent_summary_from_record,
+    render_critic_user,
+)
 
 log = logging.getLogger("pilot")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(message)s")
@@ -56,6 +64,7 @@ class ArmSpec:
     model: str
     thinking: bool = False
     system: str | None = None
+    proposer_critic: bool = False
 
 
 @dataclass
@@ -69,6 +78,7 @@ class TurnRecord:
     sa_raw: float | None
     parsed: bool
     smiles: str | None
+    role: str | None = None
 
 
 @dataclass
@@ -172,6 +182,76 @@ def run_trajectory(arm: ArmSpec, prompt: dict, model: LocalChatModel,
     return traj
 
 
+def run_pc_trajectory(arm: ArmSpec, prompt: dict, model: LocalChatModel,
+                       cfg, threshold_reward: float) -> TrajectoryRecord:
+    """Two-turn propose→critique on a shared model (Amendment v2 dry-run).
+
+    Turn 1: proposer with PROPOSER_SYSTEM produces s1; scored normally.
+    Turn 2: critic with CRITIC_SYSTEM sees s1 + breakdown; scored with the
+    α·ReLU(r2−r1) bonus gated by Tanimoto and dock-improvement (only when
+    cfg.proposer_critic_enabled).
+    """
+    traj = TrajectoryRecord(arm=arm.name, prompt_id=prompt["id"])
+
+    # --- Turn 1: proposer ----------------------------------------------------
+    proposer_user = f"{prompt['context']}\n\n{prompt['instruction']}"
+    if prompt.get("seed_smiles"):
+        proposer_user = f"Seed SMILES: {prompt['seed_smiles']}\n\n{proposer_user}"
+    proposer_history = [
+        {"role": "system", "content": PROPOSER_SYSTEM},
+        {"role": "user", "content": proposer_user},
+    ]
+    s1_response = model.chat(proposer_history)
+    s1_rec = verify_group([s1_response], cfg, step=0)[0]
+    s1_rec.role = "proposer"
+    traj.turns.append(TurnRecord(
+        turn=1, prompt=proposer_user, response=s1_response,
+        reward=float(s1_rec.reward),
+        dock_kcal=s1_rec.dock_kcal, qed=s1_rec.qed, sa_raw=s1_rec.sa_raw,
+        parsed=s1_rec.parsed, smiles=s1_rec.smiles, role="proposer",
+    ))
+    if s1_rec.reward > traj.best_reward:
+        traj.best_reward = float(s1_rec.reward)
+        traj.best_dock = s1_rec.dock_kcal
+    if s1_rec.reward >= threshold_reward:
+        traj.reached_threshold_at_turn = 1
+        # We still run the critic so the dry-run exercises both halves.
+
+    # --- Turn 2: critic ------------------------------------------------------
+    parent = parent_summary_from_record(s1_rec)
+    critic_user = render_critic_user(prompt, parent)
+    critic_history = [
+        {"role": "system", "content": CRITIC_SYSTEM},
+        {"role": "user", "content": critic_user},
+    ]
+    s2_response = model.chat(critic_history)
+    # Re-use the canonical pair-scoring path so the gates fire identically
+    # to what reward_fn_openrlhf_pc will do at RL time.
+    pair_records = verify_pair_group(
+        proposer_responses=[s1_response],
+        critic_responses=[s2_response],
+        parent_smiles=[s1_rec.smiles],
+        parent_rewards=[float(s1_rec.reward)],
+        parent_docks=[s1_rec.dock_kcal],
+        cfg=cfg, step=0,
+    )
+    s2_rec = pair_records[1]  # critic record
+    traj.turns.append(TurnRecord(
+        turn=2, prompt=critic_user, response=s2_response,
+        reward=float(s2_rec.reward),
+        dock_kcal=s2_rec.dock_kcal, qed=s2_rec.qed, sa_raw=s2_rec.sa_raw,
+        parsed=s2_rec.parsed, smiles=s2_rec.smiles, role="critic",
+    ))
+    if s2_rec.reward > traj.best_reward:
+        traj.best_reward = float(s2_rec.reward)
+        traj.best_dock = s2_rec.dock_kcal
+    if (s2_rec.reward >= threshold_reward
+            and traj.reached_threshold_at_turn is None):
+        traj.reached_threshold_at_turn = 2
+
+    return traj
+
+
 # --- Main -------------------------------------------------------------------
 
 def main() -> None:
@@ -189,7 +269,12 @@ def main() -> None:
     cfg = load_verifier_config(str(args.config))
 
     items = [json.loads(ln) for ln in args.prompts.read_text().splitlines() if ln.strip()]
-    items = [it for it in items if it.get("split") == args.split][: args.n_prompts]
+    items = [it for it in items if it.get("split") == args.split]
+    # If the dataset was emitted in --emit-roles pc mode it interleaves
+    # proposer and critic records; the pilot constructs the critic prompt
+    # on-the-fly, so skip the placeholder critic rows.
+    items = [it for it in items if it.get("role", "proposer") != "critic"]
+    items = items[: args.n_prompts]
     log.info("Using %d %s prompts", len(items), args.split)
 
     arms: list[ArmSpec] = [ArmSpec(**a) for a in json.loads(args.arms.read_text())]
@@ -208,9 +293,13 @@ def main() -> None:
             stats = by_arm.setdefault(arm.name, _new_arm_stats())
             for it in items:
                 t0 = time.time()
-                traj = run_trajectory(arm, it, model, cfg,
-                                      max_turns=args.max_turns,
-                                      threshold_reward=args.threshold_reward)
+                if arm.proposer_critic:
+                    traj = run_pc_trajectory(arm, it, model, cfg,
+                                             threshold_reward=args.threshold_reward)
+                else:
+                    traj = run_trajectory(arm, it, model, cfg,
+                                          max_turns=args.max_turns,
+                                          threshold_reward=args.threshold_reward)
                 out = asdict(traj)
                 out["wall_sec"] = time.time() - t0
                 fout.write(json.dumps(out) + "\n")

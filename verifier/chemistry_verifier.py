@@ -17,9 +17,10 @@ from __future__ import annotations
 import logging
 import math
 import os
+import re
 import time
 from dataclasses import asdict, dataclass, field
-from typing import Any, Sequence
+from typing import Any, Literal, Sequence
 
 from rdkit import Chem, RDLogger
 
@@ -92,6 +93,13 @@ class VerifierConfig:
     rank_based_dock: bool = False
     # Multi-turn improvement bonus coefficient (Fix 2).
     multiturn_improvement_coef: float = 0.2
+    # Proposer-critic (Amendment v2). When True, verify_pair_group applies the
+    # non-zero-sum critic credit gated by dock improvement + Tanimoto.
+    proposer_critic_enabled: bool = False
+    critic_alpha: float = 0.5
+    critic_min_dock_improvement_kcal: float = 0.5
+    critic_tanimoto_max: float = 0.7
+    within_role_baseline: bool = True
 
 
 # --- Records ----------------------------------------------------------------
@@ -116,6 +124,7 @@ class RewardRecord:
     descriptors: dict[str, float] | None = None
     step: int | None = None
     turn: int | None = None
+    role: Literal["proposer", "critic"] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return asdict(self)
@@ -248,6 +257,41 @@ def _apply_rank_dock(records: list[RewardRecord], cfg: VerifierConfig) -> None:
         r.r_dock = r_dock_rank
 
 
+def _apply_critic_credit(
+    critic_records: list[RewardRecord],
+    parent_smiles: Sequence[str | None],
+    parent_rewards: Sequence[float | None],
+    parent_docks: Sequence[float | None],
+    cfg: VerifierConfig,
+) -> None:
+    """Add `cfg.critic_alpha * ReLU(r2 − r1)` to each critic's reward iff
+    BOTH gates pass — dock improvement >= cfg.critic_min_dock_improvement_kcal
+    AND Tanimoto(s1, s2) <= cfg.critic_tanimoto_max. Risk #1 + #2 in plan.
+
+    `parent_*` lists are aligned 1:1 with `critic_records`.
+    """
+    if not (len(critic_records) == len(parent_smiles) == len(parent_rewards) == len(parent_docks)):
+        raise ValueError("parent_* lists must align 1:1 with critic_records")
+
+    for r2, s1, r1, d1 in zip(critic_records, parent_smiles, parent_rewards, parent_docks):
+        if not r2.parsed or r2.smiles is None:
+            continue
+        if s1 is None or r1 is None or d1 is None:
+            continue
+        if r2.dock_kcal is None or not math.isfinite(r2.dock_kcal):
+            continue
+        # Dock improvement: more negative is better, so improvement = d1 − d2
+        if (d1 - r2.dock_kcal) < cfg.critic_min_dock_improvement_kcal:
+            continue
+        m1 = parse_smiles(s1)
+        m2 = parse_smiles(r2.smiles)
+        if m1 is None or m2 is None:
+            continue
+        if max_tanimoto(m2, [m1]) > cfg.critic_tanimoto_max:
+            continue
+        r2.reward += cfg.critic_alpha * max(0.0, r2.reward - r1)
+
+
 def verify_group(
     responses: Sequence[str],
     cfg: VerifierConfig,
@@ -284,6 +328,41 @@ def verify_group(
     return records
 
 
+def verify_pair_group(
+    proposer_responses: Sequence[str],
+    critic_responses: Sequence[str],
+    parent_smiles: Sequence[str | None],
+    parent_rewards: Sequence[float | None],
+    parent_docks: Sequence[float | None],
+    cfg: VerifierConfig,
+    step: int = 0,
+) -> list[RewardRecord]:
+    """Score a proposer-critic GRPO sub-group for one prompt (Amendment v2).
+
+    Returns 2G records — `len(proposer_responses)` proposer records first,
+    then `len(critic_responses)` critic records. The critic-credit gate
+    (dock improvement + Tanimoto) is applied to critic records only.
+
+    `parent_*` lists align 1:1 with `critic_responses`. They name the
+    proposer SMILES that each critic was tasked with improving. Use the
+    proposer's reward and dock from the same RL step.
+    """
+    proposer_records = verify_group(proposer_responses, cfg, step=step)
+    for r in proposer_records:
+        r.role = "proposer"
+
+    critic_records = verify_group(critic_responses, cfg, step=step)
+    for r in critic_records:
+        r.role = "critic"
+
+    if cfg.proposer_critic_enabled:
+        _apply_critic_credit(
+            critic_records, parent_smiles, parent_rewards, parent_docks, cfg,
+        )
+
+    return list(proposer_records) + list(critic_records)
+
+
 # --- OpenRLHF adapter -------------------------------------------------------
 
 def reward_fn_openrlhf(queries, responses, **kwargs) -> list[float]:
@@ -301,3 +380,80 @@ def reward_fn_openrlhf(queries, responses, **kwargs) -> list[float]:
     records = verify_group(responses, cfg, step=step)
     # OpenRLHF wants a float list aligned with `responses`.
     return [r.reward for r in records]
+
+
+# --- OpenRLHF adapter: proposer-critic --------------------------------------
+
+_TAG_RE_CACHE: dict[str, re.Pattern] = {}
+
+
+def _tag_pattern(name: str) -> re.Pattern:
+    pat = _TAG_RE_CACHE.get(name)
+    if pat is None:
+        pat = re.compile(rf"<{re.escape(name)}>(.*?)</{re.escape(name)}>", re.DOTALL)
+        _TAG_RE_CACHE[name] = pat
+    return pat
+
+
+def _parse_tag(text: str, name: str) -> str | None:
+    """Return the inner text of the first <name>...</name> block, or None."""
+    m = _tag_pattern(name).search(text or "")
+    return m.group(1).strip() if m else None
+
+
+def _parse_float_tag(text: str, name: str) -> float | None:
+    raw = _parse_tag(text, name)
+    if raw is None:
+        return None
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def reward_fn_openrlhf_pc(queries, responses, **kwargs) -> list[float]:
+    """OpenRLHF entry point for the C-PC arm.
+
+    Each query string must carry these tags (the dataset preprocessor + the
+    rollout collator are responsible for filling them in):
+      <root_id>...</root_id>            shared between a proposer query and the matching critic query
+      <role>proposer|critic</role>
+      <parent_smiles>...</parent_smiles>      critic-only: s1 from the proposer
+      <parent_reward>...</parent_reward>      critic-only: r(s1)
+      <parent_dock>...</parent_dock>          critic-only: dock_kcal(s1)
+
+    Responses are scored per (root_id, role) group via verify_pair_group.
+    """
+    from verifier_config_loader import load_verifier_config  # lazy
+
+    cfg_path = os.environ["CHEM_VERIFIER_CONFIG"]
+    step = int(os.environ.get("CHEM_VERIFIER_STEP", "0"))
+    cfg = load_verifier_config(cfg_path)
+
+    by_root: dict[str, dict[str, list[int]]] = {}
+    for i, q in enumerate(queries):
+        root_id = _parse_tag(q, "root_id") or f"_anon_{i}"
+        role = (_parse_tag(q, "role") or "proposer").lower()
+        if role not in {"proposer", "critic"}:
+            role = "proposer"
+        by_root.setdefault(root_id, {"proposer": [], "critic": []})[role].append(i)
+
+    out = [0.0] * len(responses)
+    for root_id, slots in by_root.items():
+        prop_idxs = slots["proposer"]
+        crit_idxs = slots["critic"]
+        prop_resp = [responses[i] for i in prop_idxs]
+        crit_resp = [responses[i] for i in crit_idxs]
+        parent_smiles = [_parse_tag(queries[i], "parent_smiles") for i in crit_idxs]
+        parent_rewards = [_parse_float_tag(queries[i], "parent_reward") for i in crit_idxs]
+        parent_docks = [_parse_float_tag(queries[i], "parent_dock") for i in crit_idxs]
+        recs = verify_pair_group(
+            prop_resp, crit_resp,
+            parent_smiles, parent_rewards, parent_docks,
+            cfg, step=step,
+        )
+        for r, idx in zip(recs[: len(prop_idxs)], prop_idxs):
+            out[idx] = r.reward
+        for r, idx in zip(recs[len(prop_idxs):], crit_idxs):
+            out[idx] = r.reward
+    return out

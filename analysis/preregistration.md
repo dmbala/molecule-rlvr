@@ -96,3 +96,7 @@ No changes to these files after freeze without an amendment to this document.
 
 Record any in-training deviation from this document here with date, reason, and
 new measurement plan. Do not silently modify protocol.
+
+**Amendment pointer:** `analysis/preregistration_v2.md` (2026-05-23) adds Arm
+C-PC (proposer-critic self-play + DiffSBDD seed bank). v2 supersedes nothing
+in this document; the three-arm comparisons A/B/C remain frozen.
