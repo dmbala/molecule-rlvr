@@ -46,9 +46,12 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
     # at construction time and blocks every Vina call. 0.7.1 ships the JSON
     # files correctly and keeps the deprecated `.setup` attribute that
     # verifier/reward_components.py uses.
+    # gemmi is imported by meeko/polymer.py at package init; 0.7.1's wheel
+    # leaves it out of install_requires, so we add it explicitly.
     pip install --no-cache-dir \
         rdkit==2024.3.5 \
         meeko==0.7.1 \
+        gemmi==0.7.5 \
         vina==1.2.5 \
         openbabel-wheel \
         numpy==1.26.4 scipy==1.13.1 pandas==2.2.2 \
