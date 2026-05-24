@@ -21,8 +21,10 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import random
 import string
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import asdict
 from pathlib import Path
 
@@ -90,6 +92,30 @@ def wrap_as_response(smi: str) -> str:
     return f"<answer>{smi}</answer>"
 
 
+def _score_one(args_tuple):
+    """Worker function for ProcessPoolExecutor. Loads config from disk on
+    first call per process; subsequent calls reuse the cached cfg via the
+    module-level cache below."""
+    smi, lbl, cfg_path = args_tuple
+    cfg = _worker_cfg(cfg_path)
+    rec = verify_group([wrap_as_response(smi)], cfg, step=9999)[0]
+    d = asdict(rec)
+    d["label"] = lbl
+    d["source_smiles"] = smi
+    return d
+
+
+_WORKER_CFG_CACHE: dict = {}
+
+
+def _worker_cfg(cfg_path: str):
+    cfg = _WORKER_CFG_CACHE.get(cfg_path)
+    if cfg is None:
+        cfg = load_verifier_config(cfg_path)
+        _WORKER_CFG_CACHE[cfg_path] = cfg
+    return cfg
+
+
 def main() -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True, type=Path)
@@ -103,6 +129,9 @@ def main() -> None:
     ap.add_argument("--out", required=True, type=Path)
     ap.add_argument("--top-decile-min-known-frac", type=float, default=0.8,
                     help="Acceptance threshold (Fix 2).")
+    ap.add_argument("--n-workers", type=int,
+                    default=int(os.environ.get("SLURM_CPUS_PER_TASK", "1")),
+                    help="ProcessPool workers (default: $SLURM_CPUS_PER_TASK or 1).")
     args = ap.parse_args()
 
     rng = random.Random(args.seed)
@@ -127,14 +156,28 @@ def main() -> None:
     log.info("Scoring: known=%d random=%d junk=%d", len(known), len(random_smi), len(junk_smi))
 
     # Score each molecule as its own singleton group (no diversity signal).
-    # For the sanity test we care about the other reward components.
-    records = []
-    for smi, lbl in zip(all_smi, labels):
-        rec = verify_group([wrap_as_response(smi)], cfg, step=9999)[0]
-        d = asdict(rec)
-        d["label"] = lbl
-        d["source_smiles"] = smi
-        records.append(d)
+    # For the sanity test we care about the other reward components. Run in
+    # a ProcessPool because Vina is the dominant cost (~6 min/dock at
+    # exhaustiveness=16, n_seeds=3) — sequential 2k mols ~~ 200 hours.
+    n_workers = max(1, args.n_workers)
+    log.info("Scoring %d molecules across %d workers", len(all_smi), n_workers)
+    records: list[dict] = [None] * len(all_smi)  # type: ignore[list-item]
+    work = [(smi, lbl, str(args.config)) for smi, lbl in zip(all_smi, labels)]
+    if n_workers == 1:
+        for i, item in enumerate(work):
+            records[i] = _score_one(item)
+            if (i + 1) % 50 == 0:
+                log.info("Scored %d / %d", i + 1, len(all_smi))
+    else:
+        with ProcessPoolExecutor(max_workers=n_workers) as pool:
+            futures = {pool.submit(_score_one, item): i for i, item in enumerate(work)}
+            done = 0
+            for fut in as_completed(futures):
+                i = futures[fut]
+                records[i] = fut.result()
+                done += 1
+                if done % 50 == 0:
+                    log.info("Scored %d / %d", done, len(all_smi))
 
     rewards = np.array([r["reward"] for r in records])
     order = np.argsort(-rewards)  # descending
