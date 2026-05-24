@@ -91,13 +91,20 @@ From: nvidia/cuda:12.4.1-devel-ubuntu22.04
     pip install --no-cache-dir \
         https://github.com/Dao-AILab/flash-attention/releases/download/v2.6.3/flash_attn-2.6.3+cu123torch2.3cxx11abiFALSE-cp311-cp311-linux_x86_64.whl
 
-    # Clone openrlhf at the 0.4.4 tag, relax the flash-attn pin, install.
+    # Clone openrlhf at the 0.4.4 tag, relax the flash-attn AND transformers
+    # pins, install. transformers needs to be >= 4.51 so AutoTokenizer can
+    # parse Qwen3's tokenizer.json (the format changed between 4.44 and 4.51);
+    # otherwise extend_vocab.py and train_sft.py both fail at tokenizer load.
     git clone --depth 1 --branch v0.4.4 https://github.com/OpenRLHF/OpenRLHF /opt/openrlhf
     cd /opt/openrlhf
     # Match both setup.py-style and pyproject-style pins.
     grep -rl 'flash-attn==2.6.1' . | xargs -r sed -i 's/flash-attn==2.6.1/flash-attn/g'
     grep -rl 'flash_attn==2.6.1' . | xargs -r sed -i 's/flash_attn==2.6.1/flash_attn/g' || true
+    grep -rl 'transformers==4.44' . | xargs -r sed -i 's/transformers==4.44[0-9.]*/transformers>=4.51,<5/g'
     pip install --no-cache-dir ".[vllm,ray]"
+    # openrlhf's resolver may still drag the old pinned version in; force
+    # the upgrade after install.
+    pip install --no-cache-dir --upgrade "transformers>=4.51,<5"
     cd /
 
     # --- Utility deps ---------------------------------------------------------

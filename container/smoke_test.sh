@@ -55,6 +55,20 @@ assert "pdb" in pybel.informats and "pdbqt" in pybel.outformats, \
 print("  pdb/pdbqt formats: OK")
 PY
 
+echo "== HF transformers + Qwen3 tokenizer compat =="
+# Catches the transformers==4.44 / Qwen3-tokenizer.json mismatch that blocked
+# extend_vocab.py and train_sft.py on the previous build. We only need the
+# tokenizer to *parse* here, not the model weights, so this is fast.
+python - <<'PY'
+import transformers, tokenizers
+print(f"  transformers {transformers.__version__}, tokenizers {tokenizers.__version__}")
+assert tuple(int(x) for x in transformers.__version__.split(".")[:2]) >= (4, 51), \
+    "transformers must be >= 4.51 to parse Qwen3's tokenizer.json"
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+print(f"  Qwen3 tokenizer loaded: {type(tok).__name__} vocab_size={tok.vocab_size}")
+PY
+
 echo "== CUDA visibility =="
 python - <<'PY'
 import torch
