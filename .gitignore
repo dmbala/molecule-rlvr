@@ -82,6 +82,16 @@ data/receptors/*/*.pdb
 # Generated prompt dataset (240+60 JSONL; regenerate via generate_prompts.py)
 data/prompts/mpro_prompts.jsonl
 
+# Generated tokenizer artifacts (~12 MB; deterministically regenerate via
+# training/tokenizer/extend_vocab.py against Qwen3 weights on HF).
+training/tokenizer/qwen3_atomInSmiles/
+
+# DiffSBDD seed bank intermediates and outputs (generated offline; the
+# diffsbdd_7L13.jsonl bank should be committed only after the receptor-prep
+# consistency check passes, via git-LFS — see data/seeds/README.md).
+data/seeds/diffsbdd_raw.sdf
+data/seeds/diffsbdd_7L13.jsonl
+
 # Analysis outputs
 analysis/reward_validation.json
 analysis/vs_baseline_result.json

@@ -16,6 +16,11 @@ zinc_random.smi  (not committed; download separately)
       (a) Background for the reward sanity check.
       (b) Lead-optimization prompt seeds (zinc_random provenance).
 
-To fetch:
-    curl -o zinc_random.smi 'https://files.docking.org/2D/BB/BBAB/BBAB.smi' | head -n 2000
-    (or equivalent tranche; any "drug-like" subset works)
+To fetch (BBAB tranche is now 404; BDAA works as of 2026-05-23):
+    curl -sL https://files.docking.org/2D/BD/BDAA.smi > /tmp/bdaa.smi
+    { head -1 /tmp/bdaa.smi; \
+      tail -n +2 /tmp/bdaa.smi | shuf --random-source=/dev/zero | head -2000; } \
+        > zinc_random.smi
+    (header line + 2000 SMILES + zinc_id pairs)
+The seeded shuf reproduces the same sample across machines. Any other
+ZINC20 drug-like tranche works equivalently if BDAA goes 404 later.
