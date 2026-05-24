@@ -3,7 +3,7 @@
 
 docking:
   receptor_pdbqt: /workspace/data/receptors/7L13/receptor.pdbqt
-  center: [10.4, -5.8, 23.1]     # placeholder — overwritten by receptor-prep output
+  center: [-21.2, -4.87, -28.82]   # 7L13 XF7 cocrystal centroid (data/receptors/7L13/receptor.config)
   size: [22.0, 22.0, 22.0]
   exhaustiveness: 16
   num_modes: 9
