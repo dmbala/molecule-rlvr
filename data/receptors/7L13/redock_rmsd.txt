@@ -1,0 +1,4 @@
+heavy_atom_rmsd = 3.708
+method = OBAlign(prepped_pdbqt, docked_pdbqt, symmetry=True)
+acceptance_gate_kcal = 2.0
+gate_passed = false

@@ -1,0 +1,16 @@
+[
+  {
+    "name": "C_base_8B_pilot",
+    "model": "Qwen/Qwen3-8B",
+    "thinking": true,
+    "system": null,
+    "proposer_critic": false
+  },
+  {
+    "name": "C_pc_8B_pilot",
+    "model": "Qwen/Qwen3-8B",
+    "thinking": true,
+    "system": null,
+    "proposer_critic": true
+  }
+]

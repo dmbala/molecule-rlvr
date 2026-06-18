@@ -45,4 +45,9 @@ def load_verifier_config(path: str) -> VerifierConfig:
         strain_penalty=float(d.get("strain_penalty", -0.2)),
         rank_based_dock=bool(d.get("rank_based_dock", False)),
         multiturn_improvement_coef=float(d.get("multiturn_improvement_coef", 0.2)),
+        proposer_critic_enabled=bool(d.get("proposer_critic_enabled", False)),
+        critic_alpha=float(d.get("critic_alpha", 0.5)),
+        critic_min_dock_improvement_kcal=float(d.get("critic_min_dock_improvement_kcal", 0.5)),
+        critic_tanimoto_max=float(d.get("critic_tanimoto_max", 0.7)),
+        within_role_baseline=bool(d.get("within_role_baseline", True)),
     )

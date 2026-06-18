@@ -1,5 +1,6 @@
-# VerifierConfig consumed by chemistry_verifier.reward_fn_openrlhf.
-# Path is referenced via env var CHEM_VERIFIER_CONFIG.
+# VerifierConfig for the Amendment v2 C-PC arm.
+# Reads identically to verifier.yaml for the shared reward terms; adds the
+# four proposer-critic fields gated by reward_fn_openrlhf_pc.
 
 docking:
   receptor_pdbqt: /workspace/data/receptors/7L13/receptor.pdbqt
@@ -17,7 +18,6 @@ weights:
   diversity: 0.20
 
 curriculum:
-  # (step, dock_sigmoid_center_kcal_per_mol)
   milestones:
     - [0, -5.0]
     - [100, -7.0]
@@ -31,3 +31,10 @@ strain_penalty: -0.2
 
 rank_based_dock: false
 multiturn_improvement_coef: 0.2
+
+# --- Amendment v2 (proposer-critic) -----------------------------------------
+proposer_critic_enabled: true
+critic_alpha: 0.5
+critic_min_dock_improvement_kcal: 0.5
+critic_tanimoto_max: 0.7
+within_role_baseline: true

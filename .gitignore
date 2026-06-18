@@ -58,3 +58,41 @@ runs/
 
 # Build logs (now under container/)
 container/build_interactive.log
+
+# --- Project: molecule-rlvr specific --------------------------------------
+# W&B / MLflow
+wandb/
+mlruns/
+
+# Large derived SFT corpora (5M+ SMILES; regenerate via prepare_stage0a.py)
+data/sft/
+data/reference/zinc_random.smi
+data/reference/zinc20/
+
+# Receptor prep intermediates (committed outputs are receptor.pdbqt, .config, redock_rmsd.txt, README)
+data/receptors/*/receptor.pdb
+data/receptors/*/receptor_noh.pdb
+data/receptors/*/receptor_h.pdb
+data/receptors/*/cocrystal.pdb
+data/receptors/*/cocrystal_lig.pdbqt
+data/receptors/*/cocrystal_redocked.pdbqt
+data/receptors/*/reduce_*.log
+data/receptors/*/*.pdb
+
+# Generated prompt dataset (240+60 JSONL; regenerate via generate_prompts.py)
+data/prompts/mpro_prompts.jsonl
+
+# Generated tokenizer artifacts (~12 MB; deterministically regenerate via
+# training/tokenizer/extend_vocab.py against Qwen3 weights on HF).
+training/tokenizer/qwen3_atomInSmiles/
+
+# DiffSBDD seed bank intermediates and outputs (generated offline; the
+# diffsbdd_7L13.jsonl bank should be committed only after the receptor-prep
+# consistency check passes, via git-LFS — see data/seeds/README.md).
+data/seeds/diffsbdd_raw.sdf
+data/seeds/diffsbdd_7L13.jsonl
+
+# Analysis outputs
+analysis/reward_validation.json
+analysis/vs_baseline_result.json
+analysis/pilot_results.jsonl

@@ -25,9 +25,49 @@ PY
 echo "== Vina CLI =="
 vina --version
 
-echo "== Receptor-prep tooling (ADFRsuite) =="
-prepare_receptor4.py -h 2>&1 | head -n 5
-reduce -h 2>&1 | head -n 3 || true
+echo "== Ligand prep (meeko MoleculePreparation + PDBQTWriterLegacy) =="
+# Catches the meeko-0.6.0 packaging bug where data/params/ad4_types.json is
+# missing. If MoleculePreparation() can construct AND prep.prepare() runs on a
+# real molecule, the docking path is wired correctly.
+python - <<'PY'
+from meeko import MoleculePreparation, PDBQTWriterLegacy
+from rdkit import Chem
+from rdkit.Chem import AllChem
+
+prep = MoleculePreparation()
+mol = Chem.MolFromSmiles("O=C(NC1CCOCC1)c1ccc(F)cc1")
+mol = Chem.AddHs(mol)
+AllChem.EmbedMolecule(mol, AllChem.ETKDGv3())
+AllChem.MMFFOptimizeMolecule(mol, maxIters=200)
+prep.prepare(mol)
+out = PDBQTWriterLegacy.write_string(prep.setup)
+pdbqt = out[0] if isinstance(out, tuple) else out
+assert "ATOM" in pdbqt or "HETATM" in pdbqt, "PDBQT output missing atom records"
+print(f"  meeko prep + PDBQTWriterLegacy: OK ({len(pdbqt)} chars)")
+PY
+
+echo "== Receptor-prep path (OpenBabel Python + RDKit) =="
+python - <<'PY'
+from openbabel import pybel
+print(f"  openbabel formats available: {len(pybel.informats)} in / {len(pybel.outformats)} out")
+assert "pdb" in pybel.informats and "pdbqt" in pybel.outformats, \
+    "OpenBabel build is missing PDB/PDBQT support"
+print("  pdb/pdbqt formats: OK")
+PY
+
+echo "== HF transformers + Qwen3 tokenizer compat =="
+# Catches the transformers==4.44 / Qwen3-tokenizer.json mismatch that blocked
+# extend_vocab.py and train_sft.py on the previous build. We only need the
+# tokenizer to *parse* here, not the model weights, so this is fast.
+python - <<'PY'
+import transformers, tokenizers
+print(f"  transformers {transformers.__version__}, tokenizers {tokenizers.__version__}")
+assert tuple(int(x) for x in transformers.__version__.split(".")[:2]) >= (4, 51), \
+    "transformers must be >= 4.51 to parse Qwen3's tokenizer.json"
+from transformers import AutoTokenizer
+tok = AutoTokenizer.from_pretrained("Qwen/Qwen3-8B", trust_remote_code=True)
+print(f"  Qwen3 tokenizer loaded: {type(tok).__name__} vocab_size={tok.vocab_size}")
+PY
 
 echo "== CUDA visibility =="
 python - <<'PY'

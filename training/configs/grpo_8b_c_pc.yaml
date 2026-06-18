@@ -1,0 +1,60 @@
+# Arm C-PC — 50-step Qwen3-8B GRPO pilot with proposer-critic self-play
+# (Amendment v2). Each GRPO group of 8 is split 4+4: 4 proposer rollouts,
+# 4 critic rollouts that see the matched proposer's SMILES + reward
+# breakdown. Critic reward is non-zero-sum (α·ReLU(r2−r1)) gated by
+# Tanimoto + dock-improvement (verifier_pc.yaml).
+
+strategy: deepspeed_stage_2
+pretrain: /workspace/checkpoints/sft_stage0c
+reward_pretrain: null
+save_path: /workspace/checkpoints/grpo_8b_c_pc_pilot
+ckpt_path: /workspace/checkpoints/grpo_8b_c_pc_pilot
+
+# --- GRPO specifics ---------------------------------------------------------
+advantage_estimator: group_norm
+n_samples_per_prompt: 8           # 4 proposer + 4 critic per root prompt
+rollout_batch_size: 512
+train_batch_size: 128
+micro_train_batch_size: 2
+micro_rollout_batch_size: 16
+num_episodes: 50
+max_epochs: 1
+prompt_max_len: 2048
+generate_max_len: 1024
+
+# --- Learning ---------------------------------------------------------------
+learning_rate: 5e-7
+kl_coef: 0.02
+lambd: 1.0
+gamma: 1.0
+temperature: 0.9
+top_p: 0.95
+
+# --- Rollout (vLLM) ---------------------------------------------------------
+vllm_num_engines: 2
+vllm_tensor_parallel_size: 2
+vllm_gpu_memory_utilization: 0.85
+
+# --- Reward wiring ----------------------------------------------------------
+# Launcher must set CHEM_VERIFIER_CONFIG=verifier_pc.yaml so the verifier
+# enables the proposer_critic_enabled path. Within-role group-norm is
+# applied via the OpenRLHF group_key_fn override (training/slurm shim).
+reward_functions:
+  - chemistry_verifier_pc
+
+# --- Data -------------------------------------------------------------------
+# PC-emitted dataset interleaves proposer/critic record pairs; the rollout
+# collator pulls them out by role and patches __PARENT_*__ sentinels in the
+# critic prompt with the proposer's actual output between role passes.
+prompt_data: /workspace/data/prompts/mpro_prompts_pc.jsonl
+prompt_data_probs: "1.0"
+input_key: instruction
+label_key: null
+
+# --- Logging ----------------------------------------------------------------
+use_wandb: true
+wandb_project: molecule-rlvr
+wandb_run_name: grpo_8b_c_pc_pilot
+logging_steps: 1
+save_steps: 10
+eval_steps: 10
